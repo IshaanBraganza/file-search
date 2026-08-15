@@ -5,37 +5,20 @@ from pypdf import PdfReader
 from numba import jit
 import tkinter as tk
 from tkinterdnd2 import DND_FILES, TkinterDnD
+import os
+from urllib.parse import urljoin
+from urllib.request import pathname2url
+import platform
+import subprocess
+import ollama
+from tkinter import scrolledtext
+import threading
 
-# go through each jsonl file containing the articles
-# go through each line, get the raw text
-# make chunks based on 500-10 words (490 words + 10 from the previous chunk)
-# save this to a new jsonl file with the text, file number, and title of the wikipage it is found in
-# every 10,000 chunks create a new jsonl file (important for embedding later)
-
-"""
-
-Use Cosign similarity to check, idgaf about time, that i have lots. Iterate through all chunks (yes all) and compare using cosign similarity for all embeddings, store the top n (user input) as a list with the index and file number. Then just find the chunk and write to a .txt file.
-
-import numpy as np
-
-# Example: Two 384-dimensional embeddings (simulated here with random data)
-embedding1 = np.random.rand(384)
-embedding2 = np.random.rand(384)
-
-# 1. Calculate cosine similarity
-dot_product = np.dot(embedding1, embedding2)
-magnitudes = np.linalg.norm(embedding1) * np.linalg.norm(embedding2)
-cosine_similarity = dot_product / magnitudes
-
-# 2. Convert to a 0% to 100% scale
-# (Cosine similarity ranges from -1 to 1, so we map it to 0 to 100)
-similarity_percentage = ((cosine_similarity + 1) / 2) * 100
-
-print(f"Cosine Similarity: {cosine_similarity:.4f}")
-print(f"Similarity Score: {similarity_percentage:.2f}%")
-
-"""
 print("starting...")
+
+global model
+model = SentenceTransformer('all-MiniLM-L6-v2')
+MODEL_NAME = "gemma2:2b"
 
 def write_chunk_to_json(chunk, cc, article_name, outfile):
     # print("writing to outfile")
@@ -83,7 +66,7 @@ def get_article_length(article):
             words += 1
     return words
 
-def chunking():
+def chunking(path_of_file):
     filecount = 1
     total_chunk_count = 0
             
@@ -95,8 +78,6 @@ def chunking():
     cwcl = 256 # chunk word count length
 
     added_prev = False
-
-    path_of_file = input(" Please enter the path of your file ")
 
     path_of_file = path_of_file.replace("'", "")
 
@@ -133,7 +114,7 @@ def chunking():
             break
     print("Done file")
 
-def embedding(model):
+def embedding():
     chunks = []
     with open(f"chunks.jsonl", 'r', encoding='utf-8') as file:
         for line in file:
@@ -151,8 +132,8 @@ def cosine_sim(uq, em):
     emd = np.dot(em, em)
     return uqem / np.sqrt(uqd * emd)
 
-def query_and_search(model):
-    question_encoding = model.encode(input("What do you want to search? "), show_progress_bar=True)
+def query_and_search(user_query):
+    question_encoding = model.encode(user_query, show_progress_bar=True)
     
     print("searching......")
 
@@ -182,29 +163,102 @@ def query_and_search(model):
                         print(f"added at idx {idx}")
                         outfile.write(f"{json.loads(line).get("chunk", "").strip()}\n\n")
 
+def open_output():
+    path = "output.txt"
+    current_os = platform.system()
+    try:
+        if current_os == "Windows":
+            os.startfile(path)
+        elif current_os == "Darwin":  # macOS
+            subprocess.run(["open", path], check=True)
+        else:  # Linux
+            subprocess.run(["xdg-open", path], check=True)
+    except Exception as e:
+        print(f"Native open failed: {e}. Falling back to browser URL format...")
+        # Emergency backup: Convert path to strict browser URL structure (file:///...)
+        file_url = urljoin('file:', pathname2url(path))
+        import webbrowser
+        webbrowser.open(file_url)
+
+
+def stream_ai_response(user_query):
+
+    with open("output.txt", "r", encoding='utf-8') as infile:
+        content = infile.read()
+    output_box.config(state=tk.NORMAL)
+    output_box.delete("1.0", tk.END)
+    submit_btn.config(state=tk.DISABLED)
+    try:
+        stream = ollama.generate(
+            model=MODEL_NAME, 
+            prompt=f"Answer the following question: {user_query}, using only the following information: {content}", 
+            stream=True,
+            system="You are a cold, purely objective AI. Zero emotion. No extrapolation. Output only direct facts found in the context.",
+            options={
+                "temperature": 0.0,
+                "top_p": 0.1,
+                "top_k": 1,
+                "repeat_penalty": 1.2
+            }
+        )
+        for chunk in stream:
+            text_chunk = chunk["response"]
+            output_box.insert(tk.END, text_chunk)
+            output_box.see(tk.END)
+            root.update_idletasks()
+    except Exception as e:
+        output_box.insert(tk.END, f"\n\nERROR: {str(e)}")
+
+    finally:
+        output_box.config(state=tk.DISABLED)
+        submit_btn.config(state=tk.NORMAL)
+
+def start_query_gen_thread():
+    threading.Thread(target=send_query, daemon=True).start()
+
+
 def handle_drop(event):
-    pass
+    file_paths = root.splitlist(event.data)
+    if not file_paths: 
+        return
+    file_path = file_paths[0]
+    file_abs_dnd = os.path.abspath(file_path)
 
-root = TkinterDnD.Tk()
-root.title("app")
-root.geometry("800x400")
+    chunking(file_abs_dnd)
+    embedding()
+    entry_box.config(state="normal")
 
-
+def send_query():
+    user_query = entry_box.get()
+    if not user_query:
+        return
+    query_and_search(user_query)
+    open_output()
+    entry_box.delete(0, tk.END)
+    stream_ai_response(user_query)
 
 
 
 if __name__ == "__main__":
-    model = SentenceTransformer('all-MiniLM-L6-v2')
-    chunking()
-    embedding(model)
-    while True:
-        todo = input("Do you want to:\n1. Query\n2. Add Another File\n3. Exit?\n\nChoice (1, 2, 3): ")
-        if int(todo) == 1:
-            query_and_search(model)
-        elif int(todo) == 2:
-            chunking()
-            embedding(model)
-        elif int(todo) == 3:
-            break
-        else:
-            print("Invalid Input!")
+
+    root = TkinterDnD.Tk()
+    root.title("app")
+    root.geometry("800x400")
+
+    label = tk.Label(root, text="Drag the file you want to query",
+                    bg = "black", width=40, height=8)
+    label.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+    label.drop_target_register(DND_FILES)
+    label.dnd_bind("<<Drop>>", handle_drop)
+
+    entry_box = tk.Entry(root, width=30, bg="Black", state="disabled", fg="White")
+    entry_box.pack(pady=10)
+    submit_btn = tk.Button(root, text="submit", command=start_query_gen_thread)
+    submit_btn.pack(pady=10)
+
+    output_box = scrolledtext.ScrolledText(
+        root, wrap=tk.WORD, font=("Arial", 12), state=tk.DISABLED
+    )
+    output_box.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+    root.mainloop()
