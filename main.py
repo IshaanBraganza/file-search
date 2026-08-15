@@ -6,10 +6,6 @@ from numba import jit
 import tkinter as tk
 from tkinterdnd2 import DND_FILES, TkinterDnD
 import os
-from urllib.parse import urljoin
-from urllib.request import pathname2url
-import platform
-import subprocess
 import ollama
 from tkinter import scrolledtext
 import threading
@@ -141,7 +137,6 @@ def send_query():
     if not user_query:
         return
     query_and_search(user_query)
-    open_output()
     entry_box.delete(0, tk.END)
     stream_ai_response(user_query)
 
@@ -186,24 +181,6 @@ def query_and_search(user_query):
 
 def start_query_gen_thread():
     threading.Thread(target=send_query, daemon=True).start()
-
-# TODO: Maybe should remove open_output() because its mostly debug, but still make available to the user
-def open_output():
-    path = "output.txt"
-    current_os = platform.system()
-    try:
-        if current_os == "Windows":
-            os.startfile(path)
-        elif current_os == "Darwin":  # macOS
-            subprocess.run(["open", path], check=True)
-        else:  # Linux
-            subprocess.run(["xdg-open", path], check=True)
-    except Exception as e:
-        print(f"Native open failed: {e}. Falling back to browser URL format...")
-        # Emergency backup: Convert path to strict browser URL structure (file:///...)
-        file_url = urljoin('file:', pathname2url(path))
-        import webbrowser
-        webbrowser.open(file_url)
 
 ####################################################################################################
 ##########################################   AI OUTPUT   ###########################################
