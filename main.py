@@ -20,6 +20,10 @@ global model
 model = SentenceTransformer('all-MiniLM-L6-v2')
 MODEL_NAME = "gemma2:2b"
 
+####################################################################################################
+###########################################   CHUNKING   ###########################################
+####################################################################################################
+
 def write_chunk_to_json(chunk, cc, article_name, outfile):
     # print("writing to outfile")
     with open(outfile, "a", encoding="utf-8") as out:
@@ -114,6 +118,10 @@ def chunking(path_of_file):
             break
     print("Done file")
 
+####################################################################################################
+##########################################   EMBEDDING   ###########################################
+####################################################################################################
+
 def embedding():
     chunks = []
     with open(f"chunks.jsonl", 'r', encoding='utf-8') as file:
@@ -123,6 +131,19 @@ def embedding():
     embeddings = model.encode(chunks, batch_size=256, show_progress_bar=True).astype('float32')
     np.save("embeddings.npy", embeddings)
     print(f"done file")
+
+####################################################################################################
+#######################################   QUERY AND SEARCH   #######################################
+####################################################################################################
+
+def send_query():
+    user_query = entry_box.get()
+    if not user_query:
+        return
+    query_and_search(user_query)
+    open_output()
+    entry_box.delete(0, tk.END)
+    stream_ai_response(user_query)
 
 @jit(nopython=True)
 def cosine_sim(uq, em):
@@ -163,6 +184,10 @@ def query_and_search(user_query):
                         print(f"added at idx {idx}")
                         outfile.write(f"{json.loads(line).get("chunk", "").strip()}\n\n")
 
+def start_query_gen_thread():
+    threading.Thread(target=send_query, daemon=True).start()
+
+# TODO: Maybe should remove open_output() because its mostly debug, but still make available to the user
 def open_output():
     path = "output.txt"
     current_os = platform.system()
@@ -180,6 +205,9 @@ def open_output():
         import webbrowser
         webbrowser.open(file_url)
 
+####################################################################################################
+##########################################   AI OUTPUT   ###########################################
+####################################################################################################
 
 def stream_ai_response(user_query):
 
@@ -213,9 +241,9 @@ def stream_ai_response(user_query):
         output_box.config(state=tk.DISABLED)
         submit_btn.config(state=tk.NORMAL)
 
-def start_query_gen_thread():
-    threading.Thread(target=send_query, daemon=True).start()
-
+####################################################################################################
+#######################################   BUTTON FUNCTIONS  ########################################
+####################################################################################################
 
 def handle_drop(event):
     file_paths = root.splitlist(event.data)
@@ -228,16 +256,9 @@ def handle_drop(event):
     embedding()
     entry_box.config(state="normal")
 
-def send_query():
-    user_query = entry_box.get()
-    if not user_query:
-        return
-    query_and_search(user_query)
-    open_output()
-    entry_box.delete(0, tk.END)
-    stream_ai_response(user_query)
-
-
+####################################################################################################
+#############################################   MAIN  ##############################################
+####################################################################################################
 
 if __name__ == "__main__":
 
